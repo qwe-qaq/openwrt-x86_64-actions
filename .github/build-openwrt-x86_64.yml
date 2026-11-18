@@ -1,0 +1,197 @@
+#=================================================
+# Description: Build official OpenWrt x86/64 firmware with GitHub Actions
+# Style:       P3TERX/Actions-OpenWrt (used by yhlh9982/Actions-OpenWrt-MT798X)
+# Source:      https://github.com/openwrt/openwrt
+#=================================================
+name: Build OpenWrt x86_64 (Official)
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_branch:
+        description: '源码分支或 tag（v25.12.6 精确复刻官方镜像；也可填 openwrt-25.12 / openwrt-24.10 / main）'
+        required: true
+        default: 'v25.12.6'
+        type: string
+      root_password:
+        description: '镜像 root 密码（明文 input，公开仓库请勿填真实密码；留空则保持官方空密码，需用 VNC 设置）'
+        required: false
+        default: ''
+        type: string
+      ssh:
+        description: '开启 SSH 连接 Actions（调试用，会阻塞编译）'
+        required: false
+        default: 'false'
+        type: boolean
+      upload_release:
+        description: '同时发布到本仓库 Releases'
+        required: false
+        default: 'true'
+        type: boolean
+  # schedule:
+  #   - cron: '0 18 * * 5'
+
+permissions:
+  contents: write
+
+env:
+  # 源码指向 OpenWrt 官方 GitHub 镜像
+  REPO_URL: https://github.com/openwrt/openwrt
+  REPO_BRANCH: v25.12.6
+  FEEDS_CONF: feeds.conf.default
+  CONFIG_FILE: x86_64.config
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    # if: github.event.repository.owner.id == github.event.sender.id   # 防止他人触发，按需启用
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set build variables
+        run: |
+          BRANCH="${{ github.event.inputs.repo_branch || 'v25.12.6' }}"
+          RELEASE="${{ github.event.inputs.upload_release || 'true' }}"
+          echo "REPO_BRANCH=$BRANCH" >> $GITHUB_ENV
+          echo "UPLOAD_RELEASE=$RELEASE" >> $GITHUB_ENV
+          echo "FILE_DATE=$(TZ=$TZ date +%Y%m%d%H%M)" >> $GITHUB_ENV
+          echo "源码：$REPO_URL @ $BRANCH"
+
+      - name: Initialization environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install -y \
+            build-essential clang flex bison g++ gawk gcc-multilib gettext git \
+            libncurses5-dev libssl-dev libelf-dev zlib1g-dev \
+            python3 python3-distutils python3-setuptools python3-pyelftools \
+            autoconf automake autopoint libtool gperf texinfo device-tree-compiler \
+            rsync unzip file wget ccache bzip2 patch subversion swig pkg-config \
+            cmake ninja-build zstd xxd squashfs-tools qemu-utils
+          sudo -E apt-get -qq autoremove --purge
+          sudo -E apt-get -qq clean
+          sudo timedatectl set-timezone "$TZ" || true
+
+      - name: Clone source code
+        run: |
+          git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" openwrt
+          cd openwrt
+          VER="$(git describe --always --tags 2>/dev/null || git rev-parse --short HEAD)"
+          echo "源码版本：$VER"
+          echo "OPENWRT_VER=$VER" >> $GITHUB_ENV
+
+      - name: Load custom feeds
+        env:
+          ROOT_PASSWORD: ${{ github.event.inputs.root_password }}
+        run: |
+          # 仓库根目录若提供 feeds.conf.default 则覆盖源码自带 feeds；否则使用官方默认 feeds
+          [ -f "$FEEDS_CONF" ] && mv "$FEEDS_CONF" openwrt/feeds.conf.default || true
+          chmod +x "$DIY_P1_SH"
+          cd openwrt && "../$DIY_P1_SH"
+
+      - name: Update feeds
+        run: cd openwrt && ./scripts/feeds update -a
+
+      - name: Install feeds
+        run: cd openwrt && ./scripts/feeds install -a
+
+      - name: Load custom configuration
+        run: |
+          [ -d files ] && mv files openwrt/files || true
+          test -f "$CONFIG_FILE"
+          mv "$CONFIG_FILE" openwrt/.config
+          cd openwrt
+          make defconfig
+          chmod +x "../$DIY_P2_SH"
+          "../$DIY_P2_SH"
+
+      - name: SSH connection to Actions
+        uses: mxschmitt/action-tmate@v3
+        if: ${{ github.event.inputs.ssh == 'true' }}
+        timeout-minutes: 15
+
+      - name: Download package
+        run: |
+          cd openwrt
+          make download -j8 || make download -j1
+          find dl -size -1024c -exec ls -l {} \; || true
+          find dl -size -1024c -exec rm -f {} \; || true
+
+      - name: Compile the firmware
+        id: compile
+        run: |
+          cd openwrt
+          echo -e "$(nproc) thread compile"
+          make -j$(nproc) || make -j1 || make -j1 V=s
+          echo "status=success" >> $GITHUB_OUTPUT
+          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME || true
+          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV || true
+
+      - name: Check bin directory
+        if: steps.compile.outputs.status == 'success' && !cancelled()
+        run: |
+          cd openwrt/bin/targets/x86/64
+          ls -lh
+
+      - name: Organize files
+        id: organize
+        if: steps.compile.outputs.status == 'success' && !cancelled()
+        run: |
+          cd openwrt/bin/targets/x86/64
+          rm -rf packages
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Convert image for Huawei Cloud IMS
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        run: |
+          cd "$FIRMWARE"
+          mkdir -p /tmp/imgconv
+          for gz in *-generic-ext4-combined*.img.gz; do
+            [ -f "$gz" ] || continue
+            raw="${gz%.gz}"
+            gzip -dc "$gz" > "/tmp/imgconv/$raw"
+            qemu-img convert -f raw -O qcow2 "/tmp/imgconv/$raw" "${raw%.img}.qcow2"
+            echo "转换完成：${raw%.img}.qcow2"
+          done
+          ls -lh *.qcow2 || true
+
+      - name: Upload firmware (Artifact)
+        uses: actions/upload-artifact@v4
+        if: steps.organize.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+        with:
+          name: OpenWrt-x86_64-${{ env.REPO_BRANCH }}-${{ env.FILE_DATE }}
+          path: ${{ env.FIRMWARE }}
+          compression-level: 0
+
+      - name: Upload bin directory
+        uses: actions/upload-artifact@v4
+        if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true' && !cancelled()
+        with:
+          name: OpenWrt-bin-${{ env.FILE_DATE }}
+          path: openwrt/bin
+
+      - name: Upload firmware to Release
+        uses: softprops/action-gh-release@v2
+        if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+        with:
+          tag_name: OpenWrt-x86_64-${{ env.FILE_DATE }}
+          name: OpenWrt x86/64 ${{ env.FILE_DATE }}
+          body: |
+            源码：${{ env.REPO_URL }} (分支/tag: ${{ env.REPO_BRANCH }})
+            提交：${{ env.OPENWRT_VER }}
+            目标：x86 / 64 / Generic
+            由 GitHub Actions 自动编译
+          files: ${{ env.FIRMWARE }}/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

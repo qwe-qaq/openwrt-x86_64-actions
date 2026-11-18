@@ -11,7 +11,7 @@ on:
       repo_branch:
         description: '源码分支或 tag（v25.12.6 精确复刻官方镜像；也可填 openwrt-25.12 / openwrt-24.10 / main）'
         required: true
-        default: 'v25.12.6'
+        default: 'main'
         type: string
       root_password:
         description: '镜像 root 密码（明文 input，公开仓库请勿填真实密码；留空则保持官方空密码，需用 VNC 设置）'

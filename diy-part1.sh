@@ -108,6 +108,29 @@ if [ -f ../huaweicloud/authorized_keys ] \
   echo "[diy-part1] 已注入 SSH 公钥"
 fi
 
+# ============================================================================
+# 根治「根只读 → 配置保存不了」：覆盖镜像自带的 fstab
+#
+# 官方 x86 ext4 combined 镜像的 /etc/config/fstab 里有一条 target='/' 且
+# enabled=1 的条目，UUID 指向根分区自己。fstools 的 mount_root 在 PREINIT 阶段
+# 调用 mount_extroot() 读到它，判定为 extroot 配置，打印
+# "mount_root: switched to extroot" 后提前 return 0，跳过正常挂载：
+#   /dev/root on /rom type ext4 (ro,noatime)
+#   /dev/vda2  on /   type ext4 (ro,relatime)
+# 于是 /etc/config 只读，uci commit 静默失败，LuCI 一直显示「未保存的配置: N」，
+# 重启后配置全丢。删掉这条自挂载即可，/ 由内核以 rw 挂好。
+#
+# 构建系统会把源码根下 files/ 原样拷进 rootfs，所以覆盖是在镜像层面根治，
+# 不依赖开机后再改（开机时根已经 ro，uci-defaults 也写不进去）。
+# 另放一个 99- 开头的 uci-defaults 做兜底，防以后在 LuCI 挂载点页面又被勾回去。
+# ============================================================================
+mkdir -p files/etc/config
+cp ../huaweicloud/fstab files/etc/config/fstab
+chmod 644 files/etc/config/fstab
+cp ../huaweicloud/99-disable-root-mount.sh files/etc/uci-defaults/99-disable-root-mount.sh
+chmod 644 files/etc/uci-defaults/99-disable-root-mount.sh
+echo "[diy-part1] 已注入修正版 fstab（无 target=/ 自挂载）+ 99-disable-root-mount.sh 兜底"
+
 # 如需改用 GitHub 加速 feeds，或添加第三方插件源，可在此覆盖 feeds.conf.default，例如：
 # cat > feeds.conf.default <<'EOF'
 # src-git packages https://github.com/openwrt/packages.git;openwrt-25.12

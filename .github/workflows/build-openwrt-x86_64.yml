@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       repo_branch:
-        description: 'OpenWrt 源码分支或 tag（openwrt-25.12 / openwrt-24.10 / main / v25.12.5）'
+        description: '源码分支或 tag（v25.12.6 精确复刻官方镜像；也可填 openwrt-25.12 / openwrt-24.10 / main）'
         required: true
-        default: 'openwrt-25.12'
+        default: 'v25.12.6'
         type: string
       ssh:
         description: '开启 SSH 连接 Actions（调试用，会阻塞编译）'
@@ -32,7 +32,7 @@ permissions:
 env:
   # 源码指向 OpenWrt 官方 GitHub 镜像
   REPO_URL: https://github.com/openwrt/openwrt
-  REPO_BRANCH: openwrt-25.12
+  REPO_BRANCH: v25.12.6
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: x86_64.config
   DIY_P1_SH: diy-part1.sh
@@ -53,7 +53,7 @@ jobs:
 
       - name: Set build variables
         run: |
-          BRANCH="${{ github.event.inputs.repo_branch || 'openwrt-25.12' }}"
+          BRANCH="${{ github.event.inputs.repo_branch || 'v25.12.6' }}"
           RELEASE="${{ github.event.inputs.upload_release || 'true' }}"
           echo "REPO_BRANCH=$BRANCH" >> $GITHUB_ENV
           echo "UPLOAD_RELEASE=$RELEASE" >> $GITHUB_ENV

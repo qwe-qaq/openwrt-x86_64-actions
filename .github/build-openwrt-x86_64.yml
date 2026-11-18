@@ -18,6 +18,11 @@ on:
         required: false
         default: ''
         type: string
+      extra_apps:
+        description: '编入 diskman / homeproxy / argon 三个第三方包；编译失败时关掉可一键回退纯净镜像'
+        required: false
+        default: 'true'
+        type: boolean
       ssh:
         description: '开启 SSH 连接 Actions（调试用，会阻塞编译）'
         required: false
@@ -93,6 +98,7 @@ jobs:
       - name: Load custom feeds
         env:
           ROOT_PASSWORD: ${{ github.event.inputs.root_password }}
+          EXTRA_APPS: ${{ github.event.inputs.extra_apps || 'true' }}
         run: |
           # 仓库根目录若提供 feeds.conf.default 则覆盖源码自带 feeds；否则使用官方默认 feeds
           [ -f "$FEEDS_CONF" ] && mv "$FEEDS_CONF" openwrt/feeds.conf.default || true

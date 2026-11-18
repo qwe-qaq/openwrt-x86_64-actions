@@ -13,6 +13,11 @@ on:
         required: true
         default: 'v25.12.6'
         type: string
+      root_password:
+        description: '镜像 root 密码（明文 input，公开仓库请勿填真实密码；留空则保持官方空密码，需用 VNC 设置）'
+        required: false
+        default: ''
+        type: string
       ssh:
         description: '开启 SSH 连接 Actions（调试用，会阻塞编译）'
         required: false
@@ -86,6 +91,8 @@ jobs:
           echo "OPENWRT_VER=$VER" >> $GITHUB_ENV
 
       - name: Load custom feeds
+        env:
+          ROOT_PASSWORD: ${{ github.event.inputs.root_password }}
         run: |
           # 仓库根目录若提供 feeds.conf.default 则覆盖源码自带 feeds；否则使用官方默认 feeds
           [ -f "$FEEDS_CONF" ] && mv "$FEEDS_CONF" openwrt/feeds.conf.default || true
@@ -144,6 +151,20 @@ jobs:
           rm -rf packages
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Convert image for Huawei Cloud IMS
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        run: |
+          cd "$FIRMWARE"
+          mkdir -p /tmp/imgconv
+          for gz in *-generic-ext4-combined*.img.gz; do
+            [ -f "$gz" ] || continue
+            raw="${gz%.gz}"
+            gzip -dc "$gz" > "/tmp/imgconv/$raw"
+            qemu-img convert -f raw -O qcow2 "/tmp/imgconv/$raw" "${raw%.img}.qcow2"
+            echo "转换完成：${raw%.img}.qcow2"
+          done
+          ls -lh *.qcow2 || true
 
       - name: Upload firmware (Artifact)
         uses: actions/upload-artifact@v4

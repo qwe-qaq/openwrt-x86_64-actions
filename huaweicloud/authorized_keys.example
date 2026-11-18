@@ -1,0 +1,12 @@
+把你的 SSH 公钥粘贴到这个文件，然后把它改名为 authorized_keys（去掉 .example），
+再提交到仓库根目录的 huaweicloud/ 下。编译时 diy-part1.sh 会自动写进
+镜像的 /etc/dropbear/authorized_keys，开机即可免密登录。
+
+示例（请替换成你自己的）：
+
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx you@host
+
+注意：
+- 只支持 ssh-ed25519 / ssh-rsa / ecdsa-sha2-* 这些以 "ssh-" 或 "ecdsa-" 开头的行
+- 没有公钥、只设 root_password 也可以，但建议两个都配
+- 这个文件本身是说明，不会被拷进镜像

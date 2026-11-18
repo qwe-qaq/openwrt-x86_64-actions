@@ -34,8 +34,12 @@ BUILTIN="apk-mbedtls base-files busybox libc libgcc libmbedtls kernel procd proc
 #    - nftables：拆成 nftables-json / nftables-nojson，firewall4 依赖 +nftables-json
 REMOVED="kmod-nf-conntrack6 kmod-nf-log6 kmod-lib-crc32c nftables"
 
-# ③ 官方四个 feeds 里根本没有的第三方插件：写了必然被丢弃
-THIRDPARTY="luci-app-openclash luci-app-passwall luci-app-ssr-plus luci-app-homeproxy luci-app-istore luci-app-quickstart luci-app-diskman luci-app-ddns-go luci-app-linkease luci-app-lucky luci-app-mosdns luci-theme-argon"
+# ③ 本工程已通过 diy-part1.sh 把源码接进 package/ 的三个包：
+#    正常情况下应该生效；若被丢弃，说明源码拉取失败或 LUCI_DEPENDS 里有找不到的依赖
+EXTRA="luci-app-diskman luci-app-homeproxy luci-theme-argon luci-i18n-argon-config-zh-cn luci-i18n-diskman-zh-cn luci-i18n-homeproxy-zh-cn"
+
+# ④ 官方四个 feeds 里没有、本工程也没接入的第三方插件：写了必然被丢弃
+THIRDPARTY="luci-app-openclash luci-app-passwall luci-app-ssr-plus luci-app-istore luci-app-quickstart luci-app-ddns-go luci-app-linkease luci-app-lucky luci-app-mosdns"
 
 if [ -n "$REQ" ]; then
   LOST="$(echo "$REQ" \
@@ -47,10 +51,11 @@ if [ -n "$REQ" ]; then
           || echo "$p"
       done || true)"
 
-  EXPECTED=""; GONE=""; THIRD=""; MISSING=""
+  EXPECTED=""; GONE=""; EXTRA_LOST=""; THIRD=""; MISSING=""
   for p in $LOST; do
     if   [[ " $BUILTIN "    == *" $p "* ]]; then EXPECTED="$EXPECTED  - $p"$'\n'
     elif [[ " $REMOVED "    == *" $p "* ]]; then GONE="$GONE  - $p"$'\n'
+    elif [[ " $EXTRA "      == *" $p "* ]]; then EXTRA_LOST="$EXTRA_LOST  - $p"$'\n'
     elif [[ " $THIRDPARTY " == *" $p "* ]]; then THIRD="$THIRD  - $p"$'\n'
     else                                            MISSING="$MISSING  - $p"$'\n'
     fi
@@ -64,11 +69,16 @@ if [ -n "$REQ" ]; then
     echo "[diy-part2] ℹ 以下 $(echo "$GONE" | grep -c .) 个是 25.12 上游已删除/改名/内核内建的包，功能由其他包提供（预期）："
     printf '%s' "$GONE"
   }
+  [ -n "$EXTRA_LOST" ] && {
+    echo "[diy-part2] ❌ 以下 $(echo "$EXTRA_LOST" | grep -c .) 个是本次要编入的插件，但没生效："
+    printf '%s' "$EXTRA_LOST"
+    echo "            先翻编译日志找 'has a dependency on .* which does not exist'，"
+    echo "            再检查 diy-part1.sh 里三个仓库是否 clone 成功；详见 THIRDPARTY_APPS.md。"
+    echo "            临时回退：Run workflow 时把 extra_apps 设为 false。"
+  }
   [ -n "$THIRD" ] && {
-    echo "[diy-part2] ⚠ 以下 $(echo "$THIRD" | grep -c .) 个是第三方插件，官方 feeds 里没有："
+    echo "[diy-part2] ⚠ 以下 $(echo "$THIRD" | grep -c .) 个是官方 feeds 里没有、本工程也没接入的第三方插件："
     printf '%s' "$THIRD"
-    echo "            25.12 用 apk，传统第三方 opkg/ipk feed 在 apk 固件上不可用；"
-    echo "            要么用提供 .apk 的源装，要么退回 24.10，要么换 ImmortalWrt 源码。"
   }
   [ -n "$MISSING" ] && {
     echo "[diy-part2] ⚠ 以下包名在当前源码分支不存在（检查拼写 / feeds 是否拉全）："

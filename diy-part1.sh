@@ -4,7 +4,74 @@
 set -e
 
 echo "[diy-part1] 源码 HEAD: $(git rev-parse --short HEAD)"
-echo "[diy-part1] 保持官方源码自带 feeds.conf.default，不注入第三方插件源"
+echo "[diy-part1] 保持官方源码自带 feeds.conf.default，不整库注入第三方 feed"
+echo "[diy-part1] 三个插件以「单包源码」方式接入 package/，避免整库同名冲突"
+
+# ============================================================================
+# 用户点名要的三个包：luci-app-diskman / luci-app-homeproxy / luci-theme-argon
+#
+# 关键概念澄清（上一轮说得过于笼统，这里更正）：
+#   「25.12 用 apk，第三方 ipk feed 不可用」指的是**预编译的 .ipk 二进制包**
+#   装不上（apk 装不了 ipk）。但**源码 Makefile 形式的包不受影响**——包格式由
+#   CONFIG_USE_APK=y 决定，作用于整个工具链，构建系统会把源码 feed 编成 .apk。
+#   所以正解是：把源码接进构建树，让同一套 luci-base / 内核统一编译，依赖自动解析。
+#
+#   反过来，直接拿 ImmortalWrt 现成的 .apk 装到官方 OpenWrt 上反而有风险：
+#   那些 luci-* 包绑定 ImmortalWrt 自己的 luci-base 版本，kmod 包绑定它的内核，
+#   跨发行版装容易依赖冲突。同源码编译才是最稳的。
+#
+# 选源依据（已逐个核对 Makefile 的 include 路径与 po/zh_Hans 目录）：
+#   - argon      : jerrykuku/luci-theme-argon@master，仓库根即包目录，
+#                  include $(TOPDIR)/feeds/luci/luci.mk，已内建 CONFIG_USE_APK 判断
+#   - diskman    : sbwml/luci-app-diskman@main（JS/ucode 重写版，专为 25.12），
+#                  仓库在 luci-app-diskman/ 子目录，include 为绝对路径
+#                  （不用 lisaac 老版：它依赖 luci-lib-ipkg，25.12 已无此包）
+#   - homeproxy  : immortalwrt/luci@openwrt-25.12 的 applications/luci-app-homeproxy，
+#                  Makefile 写的是 include ../../luci.mk（相对路径），放到 package/
+#                  后会指错，故用 sed 改成绝对路径
+#
+# 三个包都有 po/zh_Hans/，构建时会自动生成 luci-i18n-*-zh-cn 中文包。
+# 依赖（sing-box / kmod-nft-tproxy / ucode-mod-digest / parted / btrfs-progs /
+# wget-ssl / coreutils* 等）由 Makefile 的 LUCI_DEPENDS 自动选中，无需手写进 .config。
+# ============================================================================
+EXTRA_APPS="${EXTRA_APPS:-true}"
+
+if [ "$EXTRA_APPS" = "true" ]; then
+  TMP="$(mktemp -d)"
+  trap 'rm -rf "$TMP"' EXIT
+
+  # --- 1) Argon 主题 -------------------------------------------------------
+  echo "[diy-part1] 拉取 luci-theme-argon ..."
+  git clone -q --depth 1 https://github.com/jerrykuku/luci-theme-argon.git "$TMP/argon"
+  rm -rf package/luci-theme-argon
+  cp -a "$TMP/argon" package/luci-theme-argon
+  rm -rf package/luci-theme-argon/.git
+
+  # --- 2) DiskMan（ucode 适配版）-------------------------------------------
+  echo "[diy-part1] 拉取 luci-app-diskman (sbwml/ucode 版) ..."
+  git clone -q --depth 1 https://github.com/sbwml/luci-app-diskman.git "$TMP/diskman"
+  rm -rf package/luci-app-diskman
+  cp -a "$TMP/diskman/luci-app-diskman" package/luci-app-diskman
+  rm -rf package/luci-app-diskman/.git
+
+  # --- 3) HomeProxy（ImmortalWrt 25.12 分支单包）----------------------------
+  echo "[diy-part1] 拉取 luci-app-homeproxy (ImmortalWrt openwrt-25.12) ..."
+  git clone -q --depth 1 --filter=blob:none --sparse \
+    -b openwrt-25.12 https://github.com/immortalwrt/luci.git "$TMP/iwrt-luci"
+  git -C "$TMP/iwrt-luci" sparse-checkout set applications/luci-app-homeproxy
+  rm -rf package/luci-app-homeproxy
+  cp -a "$TMP/iwrt-luci/applications/luci-app-homeproxy" package/luci-app-homeproxy
+  # include ../../luci.mk 只有在 feeds/luci/applications/ 下才成立，改成绝对路径
+  sed -i 's|include ../../luci.mk|include $(TOPDIR)/feeds/luci/luci.mk|' \
+    package/luci-app-homeproxy/Makefile
+
+  echo "[diy-part1] 三个包源码已放入 package/："
+  ls -d package/luci-theme-argon package/luci-app-diskman package/luci-app-homeproxy
+  echo "[diy-part1] 依赖由 LUCI_DEPENDS 自动解析；若 make defconfig 报"
+  echo "            'has a dependency on xxx, which does not exist'，见 THIRDPARTY_APPS.md"
+else
+  echo "[diy-part1] EXTRA_APPS=false，跳过三个第三方包（编译失败时可用它一键回退）"
+fi
 
 # ============================================================================
 # 华为云 ECS / KVM VPS 适配

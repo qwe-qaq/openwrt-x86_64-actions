@@ -33,4 +33,18 @@ uci -q commit dropbear
 uci -q set system.@system[0].hostname=OpenWrt-Cloud
 uci -q commit system
 
+# ---------------------------------------------------------------------------
+# 全量兜底提交（针对 LuCI 顶部「未保存的配置: N」）
+#
+# 首启时 base-files 的 config_generate 与官方 uci-defaults 会用 `uci batch`
+# 生成 network / system / dhcp / firewall / uhttpd / dropbear / fstab 等一批
+# staged changes。上面只按配置名分别 commit 了 network/dhcp/dropbear/system，
+# 其余可能仍留在 CLI delta 里，LuCI 就会显示「未保存的配置: N」。
+#
+# 不带参数的 `uci commit` 会把当前所有 staged changes 一次性写入 /etc/config/；
+# sync 确保刷盘。两者都不改配置内容，只是把已生成的值落盘。
+# ---------------------------------------------------------------------------
+uci -q commit
+sync
+
 exit 0

@@ -1,0 +1,25 @@
+# 修正版 /etc/config/fstab —— 由 diy-part1.sh 注入镜像 rootfs 的 files/etc/config/fstab
+#
+# 为什么必须覆盖官方自带的那份：
+#   官方 x86 ext4 combined 镜像里的 fstab 带一条 target='/'、enabled=1 的条目，
+#   UUID 指向根分区自己。fstools 的 mount_root 在 PREINIT 阶段调用 mount_extroot()
+#   读到它，判定为 extroot 配置，打印 "switched to extroot" 后提前 return 0，
+#   跳过正常挂载 → / 保持内核启动时的 ro，/etc/config 不可写 → uci commit 静默失败，
+#   LuCI 一直显示「未保存的配置: N」，重启全丢。
+#   删掉这条自挂载即可，/ 由内核/preinit 以 rw 挂好，不需要 block-mount 再挂一次。
+#
+# /boot 是 EFI 分区（官方镜像固定 UUID 1234-ABCD），保留自动挂载给 sysupgrade 用。
+# 若换了别的镜像导致 /boot 没挂上，用 `block info` 查实际 UUID 改这里。
+
+config global
+	option anon_swap '0'
+	option anon_mount '0'
+	option auto_swap '1'
+	option auto_mount '1'
+	option delay_root '0'
+	option check_fs '0'
+
+config mount
+	option target '/boot'
+	option uuid '1234-ABCD'
+	option enabled '1'
